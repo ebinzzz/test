@@ -15,10 +15,10 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// Configuration - replace with your actual values
+// Configuration
 const (
-	BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-	DB_DSN    = "username:password@tcp(localhost:3306)/database_name"
+	BOT_TOKEN = "8441678945:AAFmwSXzkBErmzQLmXkwzwtaDmIIvF05nP0"
+	DB_DSN    = "if0_39673757:eQtcVp3ouK@tcp(sql111.infinityfree.com:3306)/if0_39673757_admin"
 )
 
 // TelegramUpdate represents the structure of Telegram API updates
