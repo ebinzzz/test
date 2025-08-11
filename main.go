@@ -312,3 +312,29 @@ func updateChatID(email string, chatID int64) (bool, error) {
 	log.Printf("Parsed update response - Success: %t", updateResp.Success)
 	return updateResp.Success, nil
 }
+
+// isValidEmail uses regex to validate email addresses
+func isValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
+}
+
+// sendTelegramMessage sends text to a Telegram chat
+func sendTelegramMessage(token string, chatID int64, text string) {
+	sendURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
+
+	data := url.Values{}
+	data.Set("chat_id", fmt.Sprintf("%d", chatID))
+	data.Set("text", text)
+
+	resp, err := http.PostForm(sendURL, data)
+	if err != nil {
+		log.Printf("Failed to send Telegram message: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Telegram API returned status: %d", resp.StatusCode)
+	}
+}
