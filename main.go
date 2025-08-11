@@ -71,6 +71,9 @@ func main() {
 		port = "8080"
 	}
 
+	log.Printf("Starting with BOT_TOKEN: %s...", BOT_TOKEN[:10])
+	log.Printf("Starting with API_BASE_URL: %s", API_BASE_URL)
+
 	// HTTP handlers
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -170,7 +173,11 @@ func runBotLoop() {
 }
 
 func processMessage(chatID int64, message string) {
+	log.Printf("Processing message from chat %d: %s", chatID, message)
+	log.Printf("API_BASE_URL configured as: %s", API_BASE_URL)
+	
 	if isValidEmail(message) {
+		log.Printf("Email format is valid: %s", message)
 		exists, err := checkEmailExists(message)
 		if err != nil {
 			log.Printf("Error checking email existence: %v", err)
@@ -179,10 +186,12 @@ func processMessage(chatID int64, message string) {
 		}
 
 		if !exists {
+			log.Printf("Email not found in system: %s", message)
 			sendTelegramMessage(BOT_TOKEN, chatID, "❌ Not an employee of Zorqnet Technology.")
 			return
 		}
 
+		log.Printf("Email exists, updating chat ID for: %s", message)
 		success, err := updateChatID(message, chatID)
 		if err != nil {
 			log.Printf("Error updating chat ID: %v", err)
@@ -191,42 +200,67 @@ func processMessage(chatID int64, message string) {
 		}
 
 		if success {
+			log.Printf("Successfully registered chat ID for: %s", message)
 			sendTelegramMessage(BOT_TOKEN, chatID, "✅ Chat registration success!")
 		} else {
+			log.Printf("Failed to save chat ID for: %s", message)
 			sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Database error while saving chat ID.")
 		}
 
 	} else {
+		log.Printf("Invalid email format: %s", message)
 		sendTelegramMessage(BOT_TOKEN, chatID, "📩 Please send a valid email address to register.")
 	}
 }
 
 // checkEmailExists calls your PHP API to verify email
 func checkEmailExists(email string) (bool, error) {
-	url := fmt.Sprintf("%s/check-email/%s", API_BASE_URL, url.PathEscape(email))
+	apiURL := fmt.Sprintf("%s/check-email/%s", API_BASE_URL, url.PathEscape(email))
+	log.Printf("Checking email API URL: %s", apiURL)
+	log.Printf("API_BASE_URL is: %s", API_BASE_URL)
 
-	resp, err := http.Get(url)
+	resp, err := http.Get(apiURL)
 	if err != nil {
+		log.Printf("HTTP request failed: %v", err)
 		return false, err
 	}
 	defer resp.Body.Close()
 
+	log.Printf("API response status: %d", resp.StatusCode)
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read response body: %v", err)
 		return false, err
+	}
+
+	log.Printf("RAW API response body: %s", string(body))
+
+	// Check if response looks like HTML (starts with <)
+	trimmedBody := strings.TrimSpace(string(body))
+	if strings.HasPrefix(trimmedBody, "<") {
+		log.Printf("ERROR: API returned HTML instead of JSON!")
+		log.Printf("This usually means the URL is wrong or PHP has an error")
+		return false, fmt.Errorf("API returned HTML instead of JSON")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var emailResp EmailCheckResponse
 	if err := json.Unmarshal(body, &emailResp); err != nil {
+		log.Printf("JSON unmarshal failed: %v", err)
 		return false, err
 	}
 
+	log.Printf("Parsed response - Exists: %t, Email: %s", emailResp.Exists, emailResp.Email)
 	return emailResp.Exists, nil
 }
 
 // updateChatID calls your PHP API to update chat ID
 func updateChatID(email string, chatID int64) (bool, error) {
-	url := fmt.Sprintf("%s/update-chat-id", API_BASE_URL)
+	apiURL := fmt.Sprintf("%s/update-chat-id", API_BASE_URL)
 
 	reqData := UpdateChatIDRequest{
 		Email:  email,
@@ -238,47 +272,43 @@ func updateChatID(email string, chatID int64) (bool, error) {
 		return false, err
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	log.Printf("Updating chat ID URL: %s", apiURL)
+	log.Printf("POST JSON data: %s", string(jsonData))
+
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.Printf("HTTP POST failed: %v", err)
 		return false, err
 	}
 	defer resp.Body.Close()
 
+	log.Printf("Update API response status: %d", resp.StatusCode)
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read update response: %v", err)
 		return false, err
+	}
+
+	log.Printf("Update API response body: %s", string(body))
+
+	// Check if response looks like HTML
+	trimmedBody := strings.TrimSpace(string(body))
+	if strings.HasPrefix(trimmedBody, "<") {
+		log.Printf("ERROR: Update API returned HTML instead of JSON!")
+		return false, fmt.Errorf("Update API returned HTML instead of JSON")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var updateResp UpdateChatIDResponse
 	if err := json.Unmarshal(body, &updateResp); err != nil {
+		log.Printf("JSON unmarshal failed for update response: %v", err)
 		return false, err
 	}
 
+	log.Printf("Parsed update response - Success: %t", updateResp.Success)
 	return updateResp.Success, nil
-}
-
-// isValidEmail uses regex to validate email addresses
-func isValidEmail(email string) bool {
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
-	return emailRegex.MatchString(email)
-}
-
-// sendTelegramMessage sends text to a Telegram chat
-func sendTelegramMessage(token string, chatID int64, text string) {
-	sendURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-
-	data := url.Values{}
-	data.Set("chat_id", fmt.Sprintf("%d", chatID))
-	data.Set("text", text)
-
-	resp, err := http.PostForm(sendURL, data)
-	if err != nil {
-		log.Printf("Failed to send Telegram message: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Telegram API returned status: %d", resp.StatusCode)
-	}
 }
