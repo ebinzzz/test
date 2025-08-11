@@ -299,10 +299,27 @@ func updateChatIDWithRetry(email string, chatID int64) (bool, error) {
 
 // checkEmailExists calls your PHP API to verify email
 func checkEmailExists(email string) (bool, error) {
-	apiURL := fmt.Sprintf("%s?action=check_email&email=%s", API_BASE_URL, email)
+	// Build URL with proper query parameters
+	baseURL := API_BASE_URL
+	params := url.Values{}
+	params.Set("action", "check_email")
+	params.Set("email", email)
+	
+	apiURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 	log.Printf("Checking email API URL: %s", apiURL)
 
-	resp, err := httpClient.Get(apiURL)
+	// Create request with proper headers
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Add headers to mimic a real browser
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -353,7 +370,19 @@ func updateChatID(email string, chatID int64) (bool, error) {
 	log.Printf("Updating chat ID URL: %s", apiURL)
 	log.Printf("POST JSON data: %s", string(jsonData))
 
-	resp, err := httpClient.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	// Create request with proper headers
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Add headers to mimic a real browser
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("HTTP POST failed: %w", err)
 	}
