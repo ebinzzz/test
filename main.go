@@ -299,7 +299,7 @@ func updateChatIDWithRetry(email string, chatID int64) (bool, error) {
 
 // checkEmailExists calls your PHP API to verify email
 func checkEmailExists(email string) (bool, error) {
-	apiURL := fmt.Sprintf("%s?action=check_email&email=%s", API_BASE_URL, url.QueryEscape(email))
+	apiURL := fmt.Sprintf("%s?action=check_email&email=%s", API_BASE_URL, email)
 	log.Printf("Checking email API URL: %s", apiURL)
 
 	resp, err := httpClient.Get(apiURL)
