@@ -123,6 +123,10 @@ func runBotLoop() {
 	var lastUpdateID int
 	consecutiveErrors := 0
 	log.Println("Bot polling loop started")
+	
+	// Add a unique identifier for this instance
+	instanceID := fmt.Sprintf("bot-%d", time.Now().Unix())
+	log.Printf("Bot instance ID: %s", instanceID)
 
 	for {
 		apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d", BOT_TOKEN, lastUpdateID+1)
@@ -161,6 +165,14 @@ func runBotLoop() {
 
 		if !telegramResp.OK {
 			consecutiveErrors++
+			
+			// Handle the specific conflict error
+			if strings.Contains(string(body), "terminated by other getUpdates request") {
+				log.Printf("CRITICAL: Multiple bot instances detected! Another instance is already running.")
+				log.Printf("This instance (%s) will shut down to prevent conflicts.", instanceID)
+				log.Fatal("Shutting down due to multiple instance conflict")
+			}
+			
 			log.Printf("Telegram API returned error: %s", string(body))
 			time.Sleep(POLL_INTERVAL)
 			continue
