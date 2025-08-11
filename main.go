@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,14 @@ import (
 var (
 	BOT_TOKEN    = os.Getenv("BOT_TOKEN")
 	API_BASE_URL = os.Getenv("API_BASE_URL")
+)
+
+// Configuration constants
+const (
+	MAX_RETRIES = 3
+	RETRY_DELAY = time.Second
+	POLL_INTERVAL = 5 * time.Second
+	HTTP_TIMEOUT = 30 * time.Second
 )
 
 // TelegramUpdate represents the structure of Telegram API updates
@@ -59,6 +68,11 @@ type MessageData struct {
 	UpdateID int
 	ChatID   int64
 	Message  string
+}
+
+// Create HTTP client with timeout
+var httpClient = &http.Client{
+	Timeout: HTTP_TIMEOUT,
 }
 
 func main() {
@@ -105,46 +119,60 @@ func main() {
 	runBotLoop()
 }
 
-// runBotLoop polls Telegram updates every 5 seconds
+// runBotLoop polls Telegram updates with better error handling
 func runBotLoop() {
 	var lastUpdateID int
+	consecutiveErrors := 0
 	log.Println("Bot polling loop started")
 
 	for {
 		apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d", BOT_TOKEN, lastUpdateID+1)
 
-		resp, err := http.Get(apiURL)
+		resp, err := httpClient.Get(apiURL)
 		if err != nil {
-			log.Printf("Failed to connect to Telegram API: %v", err)
-			time.Sleep(5 * time.Second)
+			consecutiveErrors++
+			log.Printf("Failed to connect to Telegram API (error %d): %v", consecutiveErrors, err)
+			
+			// Exponential backoff for consecutive errors
+			backoffDuration := time.Duration(consecutiveErrors) * POLL_INTERVAL
+			if backoffDuration > 60*time.Second {
+				backoffDuration = 60*time.Second
+			}
+			time.Sleep(backoffDuration)
 			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			consecutiveErrors++
 			log.Printf("Failed to read Telegram response: %v", err)
-			time.Sleep(5 * time.Second)
+			time.Sleep(POLL_INTERVAL)
 			continue
 		}
 
 		var telegramResp TelegramResponse
 		err = json.Unmarshal(body, &telegramResp)
 		if err != nil {
+			consecutiveErrors++
 			log.Printf("Failed to parse Telegram JSON: %v", err)
-			time.Sleep(5 * time.Second)
+			time.Sleep(POLL_INTERVAL)
 			continue
 		}
 
 		if !telegramResp.OK {
+			consecutiveErrors++
 			log.Printf("Telegram API returned error: %s", string(body))
-			time.Sleep(5 * time.Second)
+			time.Sleep(POLL_INTERVAL)
 			continue
 		}
 
+		// Reset error counter on success
+		consecutiveErrors = 0
+
 		if len(telegramResp.Result) == 0 {
 			// No new updates
-			time.Sleep(5 * time.Second)
+			time.Sleep(POLL_INTERVAL)
 			continue
 		}
 
@@ -168,62 +196,104 @@ func runBotLoop() {
 		}
 
 		// Sleep before next poll
-		time.Sleep(5 * time.Second)
+		time.Sleep(POLL_INTERVAL)
 	}
 }
 
 func processMessage(chatID int64, message string) {
 	log.Printf("Processing message from chat %d: %s", chatID, message)
-	log.Printf("API_BASE_URL configured as: %s", API_BASE_URL)
 	
-	if isValidEmail(message) {
-		log.Printf("Email format is valid: %s", message)
-		exists, err := checkEmailExists(message)
-		if err != nil {
-			log.Printf("Error checking email existence: %v", err)
-			sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Server error while checking email.")
-			return
-		}
-
-		if !exists {
-			log.Printf("Email not found in system: %s", message)
-			sendTelegramMessage(BOT_TOKEN, chatID, "❌ Not an employee of Zorqnet Technology.")
-			return
-		}
-
-		log.Printf("Email exists, updating chat ID for: %s", message)
-		success, err := updateChatID(message, chatID)
-		if err != nil {
-			log.Printf("Error updating chat ID: %v", err)
-			sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Server error while saving chat ID.")
-			return
-		}
-
-		if success {
-			log.Printf("Successfully registered chat ID for: %s", message)
-			sendTelegramMessage(BOT_TOKEN, chatID, "✅ Chat registration success!")
-		} else {
-			log.Printf("Failed to save chat ID for: %s", message)
-			sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Database error while saving chat ID.")
-		}
-
-	} else {
+	if !isValidEmail(message) {
 		log.Printf("Invalid email format: %s", message)
 		sendTelegramMessage(BOT_TOKEN, chatID, "📩 Please send a valid email address to register.")
+		return
 	}
+
+	log.Printf("Email format is valid: %s", message)
+	
+	// Check if email exists with retry logic
+	exists, err := checkEmailExistsWithRetry(message)
+	if err != nil {
+		log.Printf("Error checking email existence after retries: %v", err)
+		sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Server temporarily unavailable. Please try again later.")
+		return
+	}
+
+	if !exists {
+		log.Printf("Email not found in system: %s", message)
+		sendTelegramMessage(BOT_TOKEN, chatID, "❌ Not an employee of Zorqnet Technology.")
+		return
+	}
+
+	log.Printf("Email exists, updating chat ID for: %s", message)
+	
+	// Update chat ID with retry logic
+	success, err := updateChatIDWithRetry(message, chatID)
+	if err != nil {
+		log.Printf("Error updating chat ID after retries: %v", err)
+		sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Server temporarily unavailable. Please try again later.")
+		return
+	}
+
+	if success {
+		log.Printf("Successfully registered chat ID for: %s", message)
+		sendTelegramMessage(BOT_TOKEN, chatID, "✅ Chat registration success!")
+	} else {
+		log.Printf("Failed to save chat ID for: %s", message)
+		sendTelegramMessage(BOT_TOKEN, chatID, "⚠ Database error while saving chat ID.")
+	}
+}
+
+// checkEmailExistsWithRetry implements retry logic for email checking
+func checkEmailExistsWithRetry(email string) (bool, error) {
+	for attempt := 1; attempt <= MAX_RETRIES; attempt++ {
+		exists, err := checkEmailExists(email)
+		if err == nil {
+			return exists, nil
+		}
+
+		log.Printf("Email check attempt %d/%d failed: %v", attempt, MAX_RETRIES, err)
+		
+		if attempt < MAX_RETRIES {
+			// Exponential backoff: 1s, 2s, 4s
+			backoffDuration := time.Duration(1<<uint(attempt-1)) * RETRY_DELAY
+			log.Printf("Retrying in %v...", backoffDuration)
+			time.Sleep(backoffDuration)
+		}
+	}
+	
+	return false, fmt.Errorf("failed after %d attempts", MAX_RETRIES)
+}
+
+// updateChatIDWithRetry implements retry logic for chat ID updates
+func updateChatIDWithRetry(email string, chatID int64) (bool, error) {
+	for attempt := 1; attempt <= MAX_RETRIES; attempt++ {
+		success, err := updateChatID(email, chatID)
+		if err == nil {
+			return success, nil
+		}
+
+		log.Printf("Chat ID update attempt %d/%d failed: %v", attempt, MAX_RETRIES, err)
+		
+		if attempt < MAX_RETRIES {
+			// Exponential backoff: 1s, 2s, 4s
+			backoffDuration := time.Duration(1<<uint(attempt-1)) * RETRY_DELAY
+			log.Printf("Retrying in %v...", backoffDuration)
+			time.Sleep(backoffDuration)
+		}
+	}
+	
+	return false, fmt.Errorf("failed after %d attempts", MAX_RETRIES)
 }
 
 // checkEmailExists calls your PHP API to verify email
 func checkEmailExists(email string) (bool, error) {
-	// FIXED: Use query parameters instead of path parameters
 	apiURL := fmt.Sprintf("%s?action=check_email&email=%s", API_BASE_URL, url.QueryEscape(email))
 	log.Printf("Checking email API URL: %s", apiURL)
-	log.Printf("API_BASE_URL is: %s", API_BASE_URL)
 
-	resp, err := http.Get(apiURL)
+	resp, err := httpClient.Get(apiURL)
 	if err != nil {
-		log.Printf("HTTP request failed: %v", err)
-		return false, err
+		return false, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -231,18 +301,14 @@ func checkEmailExists(email string) (bool, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Failed to read response body: %v", err)
-		return false, err
+		return false, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	log.Printf("RAW API response body: %s", string(body))
-
-	// Check if response looks like HTML (starts with <)
+	// Check if response looks like HTML (error page)
 	trimmedBody := strings.TrimSpace(string(body))
 	if strings.HasPrefix(trimmedBody, "<") {
-		log.Printf("ERROR: API returned HTML instead of JSON!")
-		log.Printf("This usually means the URL is wrong or PHP has an error")
-		return false, fmt.Errorf("API returned HTML instead of JSON")
+		log.Printf("API returned HTML instead of JSON: %s", trimmedBody[:min(200, len(trimmedBody))])
+		return false, fmt.Errorf("API returned HTML error page (status: %d)", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -252,7 +318,7 @@ func checkEmailExists(email string) (bool, error) {
 	var emailResp EmailCheckResponse
 	if err := json.Unmarshal(body, &emailResp); err != nil {
 		log.Printf("JSON unmarshal failed: %v", err)
-		return false, err
+		return false, fmt.Errorf("invalid JSON response: %w", err)
 	}
 
 	log.Printf("Parsed response - Exists: %t, Email: %s", emailResp.Exists, emailResp.Email)
@@ -261,7 +327,6 @@ func checkEmailExists(email string) (bool, error) {
 
 // updateChatID calls your PHP API to update chat ID
 func updateChatID(email string, chatID int64) (bool, error) {
-	// FIXED: Use query parameters for POST as well
 	apiURL := fmt.Sprintf("%s?action=update_chat_id", API_BASE_URL)
 
 	reqData := UpdateChatIDRequest{
@@ -271,16 +336,15 @@ func updateChatID(email string, chatID int64) (bool, error) {
 
 	jsonData, err := json.Marshal(reqData)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("JSON marshal failed: %w", err)
 	}
 
 	log.Printf("Updating chat ID URL: %s", apiURL)
 	log.Printf("POST JSON data: %s", string(jsonData))
 
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := httpClient.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Printf("HTTP POST failed: %v", err)
-		return false, err
+		return false, fmt.Errorf("HTTP POST failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -288,17 +352,14 @@ func updateChatID(email string, chatID int64) (bool, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Failed to read update response: %v", err)
-		return false, err
+		return false, fmt.Errorf("failed to read update response: %w", err)
 	}
-
-	log.Printf("Update API response body: %s", string(body))
 
 	// Check if response looks like HTML
 	trimmedBody := strings.TrimSpace(string(body))
 	if strings.HasPrefix(trimmedBody, "<") {
-		log.Printf("ERROR: Update API returned HTML instead of JSON!")
-		return false, fmt.Errorf("Update API returned HTML instead of JSON")
+		log.Printf("Update API returned HTML: %s", trimmedBody[:min(200, len(trimmedBody))])
+		return false, fmt.Errorf("update API returned HTML error page (status: %d)", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -307,8 +368,7 @@ func updateChatID(email string, chatID int64) (bool, error) {
 
 	var updateResp UpdateChatIDResponse
 	if err := json.Unmarshal(body, &updateResp); err != nil {
-		log.Printf("JSON unmarshal failed for update response: %v", err)
-		return false, err
+		return false, fmt.Errorf("invalid JSON response: %w", err)
 	}
 
 	log.Printf("Parsed update response - Success: %t", updateResp.Success)
@@ -321,22 +381,48 @@ func isValidEmail(email string) bool {
 	return emailRegex.MatchString(email)
 }
 
-// sendTelegramMessage sends text to a Telegram chat
+// sendTelegramMessage sends text to a Telegram chat with retry logic
 func sendTelegramMessage(token string, chatID int64, text string) {
+	for attempt := 1; attempt <= 2; attempt++ { // Only 2 attempts for messages
+		if sendTelegramMessageOnce(token, chatID, text) {
+			return // Success
+		}
+		
+		if attempt < 2 {
+			time.Sleep(time.Second)
+		}
+	}
+	
+	log.Printf("Failed to send message after 2 attempts to chat %d", chatID)
+}
+
+// sendTelegramMessageOnce sends a single message attempt
+func sendTelegramMessageOnce(token string, chatID int64, text string) bool {
 	sendURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
 
 	data := url.Values{}
 	data.Set("chat_id", fmt.Sprintf("%d", chatID))
 	data.Set("text", text)
 
-	resp, err := http.PostForm(sendURL, data)
+	resp, err := httpClient.PostForm(sendURL, data)
 	if err != nil {
 		log.Printf("Failed to send Telegram message: %v", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Telegram API returned status: %d", resp.StatusCode)
+		return false
 	}
+	
+	return true
+}
+
+// Helper function to get minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
