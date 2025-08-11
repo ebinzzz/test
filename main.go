@@ -22,10 +22,11 @@ var (
 
 // Configuration constants
 const (
-	MAX_RETRIES = 3
-	RETRY_DELAY = time.Second
-	POLL_INTERVAL = 5 * time.Second
-	HTTP_TIMEOUT = 30 * time.Second
+	MAX_RETRIES     = 3
+	RETRY_DELAY     = time.Second
+	POLL_INTERVAL   = 5 * time.Second
+	HTTP_TIMEOUT    = 30 * time.Second
+	MESSAGE_RETRIES = 2
 )
 
 // TelegramUpdate represents the structure of Telegram API updates
@@ -75,6 +76,7 @@ var httpClient = &http.Client{
 }
 
 func main() {
+	// --- Initialization and Validation ---
 	if BOT_TOKEN == "" || API_BASE_URL == "" {
 		log.Fatal("Missing BOT_TOKEN or API_BASE_URL environment variables")
 	}
@@ -87,21 +89,19 @@ func main() {
 	log.Printf("Starting with BOT_TOKEN: %s...", BOT_TOKEN[:10])
 	log.Printf("Starting with API_BASE_URL: %s", API_BASE_URL)
 
-	// HTTP handlers
+	// --- HTTP Server Handlers ---
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Telegram bot is running"))
 	})
 
-	// Health check endpoint
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	// Start HTTP server in a goroutine
+	// --- Start HTTP Server in a goroutine ---
 	server := &http.Server{Addr: ":" + port}
-	
 	go func() {
 		log.Printf("Starting HTTP server on port %s", port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -113,7 +113,7 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 	log.Printf("HTTP server started successfully on port %s", port)
 
-	// Start Telegram bot loop
+	// --- Start Telegram Bot Polling Loop ---
 	log.Println("Starting Telegram bot polling...")
 	runBotLoop()
 }
@@ -123,25 +123,20 @@ func runBotLoop() {
 	var lastUpdateID int
 	consecutiveErrors := 0
 	log.Println("Bot polling loop started")
-	
-	// Add a unique identifier for this instance
+
+	// Add a unique identifier for this instance to help with logs
 	instanceID := fmt.Sprintf("bot-%d", time.Now().Unix())
 	log.Printf("Bot instance ID: %s", instanceID)
 
 	for {
+		// Construct the Telegram API URL for getUpdates
 		apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d", BOT_TOKEN, lastUpdateID+1)
 
 		resp, err := httpClient.Get(apiURL)
 		if err != nil {
 			consecutiveErrors++
 			log.Printf("Failed to connect to Telegram API (error %d): %v", consecutiveErrors, err)
-			
-			// Exponential backoff for consecutive errors
-			backoffDuration := time.Duration(consecutiveErrors) * POLL_INTERVAL
-			if backoffDuration > 60*time.Second {
-				backoffDuration = 60*time.Second
-			}
-			time.Sleep(backoffDuration)
+			backoffAndContinue(consecutiveErrors)
 			continue
 		}
 
@@ -165,14 +160,10 @@ func runBotLoop() {
 
 		if !telegramResp.OK {
 			consecutiveErrors++
-			
-			// Handle the specific conflict error
+			// Handle the specific conflict error when another bot instance is running
 			if strings.Contains(string(body), "terminated by other getUpdates request") {
-				log.Printf("CRITICAL: Multiple bot instances detected! Another instance is already running.")
-				log.Printf("This instance (%s) will shut down to prevent conflicts.", instanceID)
-				log.Fatal("Shutting down due to multiple instance conflict")
+				log.Fatalf("CRITICAL: Multiple bot instances detected! Shutting down this instance (%s) to prevent conflicts.", instanceID)
 			}
-			
 			log.Printf("Telegram API returned error: %s", string(body))
 			time.Sleep(POLL_INTERVAL)
 			continue
@@ -182,18 +173,19 @@ func runBotLoop() {
 		consecutiveErrors = 0
 
 		if len(telegramResp.Result) == 0 {
-			// No new updates
+			// No new updates, sleep and poll again
 			time.Sleep(POLL_INTERVAL)
 			continue
 		}
 
-		latestMessages := make(map[int64]MessageData) // store last message per chat_id
-
+		// Process the latest message from each unique chat ID
+		latestMessages := make(map[int64]MessageData)
 		for _, update := range telegramResp.Result {
 			lastUpdateID = update.UpdateID
 			if update.Message != nil {
 				chatID := update.Message.Chat.ID
 				message := strings.TrimSpace(update.Message.Text)
+				// Overwrite with the latest message if multiple from the same chat
 				latestMessages[chatID] = MessageData{
 					UpdateID: update.UpdateID,
 					ChatID:   chatID,
@@ -203,7 +195,7 @@ func runBotLoop() {
 		}
 
 		for _, msgData := range latestMessages {
-			processMessage(msgData.ChatID, msgData.Message)
+			go processMessage(msgData.ChatID, msgData.Message)
 		}
 
 		// Sleep before next poll
@@ -211,9 +203,20 @@ func runBotLoop() {
 	}
 }
 
+// backoffAndContinue implements an exponential backoff for Telegram API errors
+func backoffAndContinue(consecutiveErrors int) {
+	backoffDuration := time.Duration(consecutiveErrors) * POLL_INTERVAL
+	if backoffDuration > 60*time.Second {
+		backoffDuration = 60 * time.Second
+	}
+	log.Printf("Applying backoff for %v", backoffDuration)
+	time.Sleep(backoffDuration)
+}
+
+// processMessage handles the core logic of the bot
 func processMessage(chatID int64, message string) {
 	log.Printf("Processing message from chat %d: %s", chatID, message)
-	
+
 	if !isValidEmail(message) {
 		log.Printf("Invalid email format: %s", message)
 		sendTelegramMessage(BOT_TOKEN, chatID, "📩 Please send a valid email address to register.")
@@ -221,7 +224,7 @@ func processMessage(chatID int64, message string) {
 	}
 
 	log.Printf("Email format is valid: %s", message)
-	
+
 	// Check if email exists with retry logic
 	exists, err := checkEmailExistsWithRetry(message)
 	if err != nil {
@@ -237,7 +240,7 @@ func processMessage(chatID int64, message string) {
 	}
 
 	log.Printf("Email exists, updating chat ID for: %s", message)
-	
+
 	// Update chat ID with retry logic
 	success, err := updateChatIDWithRetry(message, chatID)
 	if err != nil {
@@ -264,7 +267,7 @@ func checkEmailExistsWithRetry(email string) (bool, error) {
 		}
 
 		log.Printf("Email check attempt %d/%d failed: %v", attempt, MAX_RETRIES, err)
-		
+
 		if attempt < MAX_RETRIES {
 			// Exponential backoff: 1s, 2s, 4s
 			backoffDuration := time.Duration(1<<uint(attempt-1)) * RETRY_DELAY
@@ -272,7 +275,6 @@ func checkEmailExistsWithRetry(email string) (bool, error) {
 			time.Sleep(backoffDuration)
 		}
 	}
-	
 	return false, fmt.Errorf("failed after %d attempts", MAX_RETRIES)
 }
 
@@ -285,7 +287,7 @@ func updateChatIDWithRetry(email string, chatID int64) (bool, error) {
 		}
 
 		log.Printf("Chat ID update attempt %d/%d failed: %v", attempt, MAX_RETRIES, err)
-		
+
 		if attempt < MAX_RETRIES {
 			// Exponential backoff: 1s, 2s, 4s
 			backoffDuration := time.Duration(1<<uint(attempt-1)) * RETRY_DELAY
@@ -293,31 +295,26 @@ func updateChatIDWithRetry(email string, chatID int64) (bool, error) {
 			time.Sleep(backoffDuration)
 		}
 	}
-	
 	return false, fmt.Errorf("failed after %d attempts", MAX_RETRIES)
 }
 
-// checkEmailExists calls your PHP API to verify email
+// checkEmailExists calls the external API to verify email
 func checkEmailExists(email string) (bool, error) {
-	// Build URL with proper query parameters
 	baseURL := API_BASE_URL
 	params := url.Values{}
 	params.Set("action", "check_email")
 	params.Set("email", email)
-	
+
 	apiURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 	log.Printf("Checking email API URL: %s", apiURL)
 
-	// Create request with proper headers
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create request: %w", err)
 	}
-	
-	// Add headers to mimic a real browser
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	req.Header.Set("User-Agent", "TelegramGoBot/1.0")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -330,13 +327,6 @@ func checkEmailExists(email string) (bool, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return false, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	// Check if response looks like HTML (error page)
-	trimmedBody := strings.TrimSpace(string(body))
-	if strings.HasPrefix(trimmedBody, "<") {
-		log.Printf("API returned HTML instead of JSON: %s", trimmedBody[:min(200, len(trimmedBody))])
-		return false, fmt.Errorf("API returned HTML error page (status: %d)", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -353,7 +343,7 @@ func checkEmailExists(email string) (bool, error) {
 	return emailResp.Exists, nil
 }
 
-// updateChatID calls your PHP API to update chat ID
+// updateChatID calls the external API to update chat ID
 func updateChatID(email string, chatID int64) (bool, error) {
 	apiURL := fmt.Sprintf("%s?action=update_chat_id", API_BASE_URL)
 
@@ -370,17 +360,14 @@ func updateChatID(email string, chatID int64) (bool, error) {
 	log.Printf("Updating chat ID URL: %s", apiURL)
 	log.Printf("POST JSON data: %s", string(jsonData))
 
-	// Create request with proper headers
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return false, fmt.Errorf("failed to create request: %w", err)
 	}
-	
-	// Add headers to mimic a real browser
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	req.Header.Set("User-Agent", "TelegramGoBot/1.0")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -393,13 +380,6 @@ func updateChatID(email string, chatID int64) (bool, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return false, fmt.Errorf("failed to read update response: %w", err)
-	}
-
-	// Check if response looks like HTML
-	trimmedBody := strings.TrimSpace(string(body))
-	if strings.HasPrefix(trimmedBody, "<") {
-		log.Printf("Update API returned HTML: %s", trimmedBody[:min(200, len(trimmedBody))])
-		return false, fmt.Errorf("update API returned HTML error page (status: %d)", resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -423,17 +403,15 @@ func isValidEmail(email string) bool {
 
 // sendTelegramMessage sends text to a Telegram chat with retry logic
 func sendTelegramMessage(token string, chatID int64, text string) {
-	for attempt := 1; attempt <= 2; attempt++ { // Only 2 attempts for messages
+	for attempt := 1; attempt <= MESSAGE_RETRIES; attempt++ {
 		if sendTelegramMessageOnce(token, chatID, text) {
 			return // Success
 		}
-		
-		if attempt < 2 {
-			time.Sleep(time.Second)
+		if attempt < MESSAGE_RETRIES {
+			time.Sleep(RETRY_DELAY)
 		}
 	}
-	
-	log.Printf("Failed to send message after 2 attempts to chat %d", chatID)
+	log.Printf("Failed to send message after %d attempts to chat %d", MESSAGE_RETRIES, chatID)
 }
 
 // sendTelegramMessageOnce sends a single message attempt
@@ -455,14 +433,6 @@ func sendTelegramMessageOnce(token string, chatID int64, text string) bool {
 		log.Printf("Telegram API returned status: %d", resp.StatusCode)
 		return false
 	}
-	
-	return true
-}
 
-// Helper function to get minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return true
 }
