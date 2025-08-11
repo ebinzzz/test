@@ -215,7 +215,8 @@ func processMessage(chatID int64, message string) {
 
 // checkEmailExists calls your PHP API to verify email
 func checkEmailExists(email string) (bool, error) {
-	apiURL := fmt.Sprintf("%s/check-email/%s", API_BASE_URL, url.PathEscape(email))
+	// FIXED: Use query parameters instead of path parameters
+	apiURL := fmt.Sprintf("%s?action=check_email&email=%s", API_BASE_URL, url.QueryEscape(email))
 	log.Printf("Checking email API URL: %s", apiURL)
 	log.Printf("API_BASE_URL is: %s", API_BASE_URL)
 
@@ -260,7 +261,8 @@ func checkEmailExists(email string) (bool, error) {
 
 // updateChatID calls your PHP API to update chat ID
 func updateChatID(email string, chatID int64) (bool, error) {
-	apiURL := fmt.Sprintf("%s/update-chat-id", API_BASE_URL)
+	// FIXED: Use query parameters for POST as well
+	apiURL := fmt.Sprintf("%s?action=update_chat_id", API_BASE_URL)
 
 	reqData := UpdateChatIDRequest{
 		Email:  email,
