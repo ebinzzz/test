@@ -71,24 +71,41 @@ func main() {
 		port = "8080"
 	}
 
-	// HTTP handler for health check or simple response
+	// HTTP handlers
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Telegram bot is running"))
 	})
 
-	// Run Telegram polling loop concurrently
-	go runBotLoop()
+	// Health check endpoint
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
 
-	log.Printf("Starting server on port %s", port)
-	err := http.ListenAndServe(":"+port, nil)
-	if err != nil {
-		log.Fatalf("Server error: %v", err)
-	}
+	// Start HTTP server in a goroutine
+	server := &http.Server{Addr: ":" + port}
+	
+	go func() {
+		log.Printf("Starting HTTP server on port %s", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+	}()
+
+	// Give the server a moment to start
+	time.Sleep(100 * time.Millisecond)
+	log.Printf("HTTP server started successfully on port %s", port)
+
+	// Start Telegram bot loop
+	log.Println("Starting Telegram bot polling...")
+	runBotLoop()
 }
 
 // runBotLoop polls Telegram updates every 5 seconds
 func runBotLoop() {
 	var lastUpdateID int
+	log.Println("Bot polling loop started")
 
 	for {
 		apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d", BOT_TOKEN, lastUpdateID+1)
