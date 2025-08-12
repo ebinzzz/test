@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Update - Zorqent</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+background-color: #fafafa;
+padding: 20px;
+color: #374151;
+line-height: 1.5;
+}
+.email-container {
+max-width: 480px;
+margin: 0 auto;
+background: #ffffff;
+border-radius: 6px;
+border: 1px solid #e5e7eb;
+overflow: hidden;
+}
+.header {
+background: #cececeff;
+padding: 24px 20px;
+border-bottom: 1px solid #e5e7eb;
+}
+.logo {
+color: #1f2937;
+font-size: 20px;
+font-weight: 600;
+margin-bottom: 4px;
+}
+.subtitle {
+color: #6b7280;
+font-size: 13px;
+}
+.hero-image {
+width: 100%;
+height: 180px;
+object-fit: cover;
+display: block;
+}
+.content {
+padding: 24px 20px;
+}
+.greeting {
+font-size: 15px;
+margin-bottom: 16px;
+}
+.team-card {
+background: #f9fafb;
+border: 1px solid #e5e7eb;
+border-radius: 4px;
+padding: 16px;
+margin: 16px 0;
+border-left: 3px solid #4b5563;
+}
+.team-title {
+color: #1f2937;
+font-size: 16px;
+font-weight: 600;
+margin-bottom: 4px;
+}
+.team-meta {
+font-size: 12px;
+color: #6b7280;
+}
+.content-text {
+font-size: 14px;
+color: #4b5563;
+margin: 16px 0;
+}
+.stats-row {
+display: flex;
+justify-content: space-between;
+background: #f3f4f6;
+padding: 12px 20px;
+border-radius: 4px;
+margin: 16px 0;
+font-size: 12px;
+gap: 50px;
+}
+.stat {
+flex: 1;
+min-width: 0;
+}
+.stat:first-child {
+text-align: left;
+}
+.stat:nth-child(2) {
+text-align: center;
+}
+.stat:last-child {
+text-align: right;
+}
+.stat-number {
+font-weight: 600;
+color: #1f2937;
+display: block;
+font-size: 14px;
+}
+.stat-label {
+color: #6b7280;
+text-transform: uppercase;
+letter-spacing: 0.5px;
+margin-top: 2px;
+}
+.action-box {
+background: #f8fafc;
+border: 1px solid #e5e7eb;
+padding: 16px;
+border-radius: 4px;
+margin: 16px 0;
+text-align: center;
+}
+.action-box h4 {
+font-size: 14px;
+color: #1f2937;
+margin-bottom: 6px;
+}
+.action-box p {
+font-size: 12px;
+color: #6b7280;
+margin-bottom: 12px;
+}
+.action-button {
+display: inline-block;
+background: #1f2937;
+color: white;
+padding: 8px 16px;
+text-decoration: none;
+border-radius: 3px;
+font-size: 12px;
+font-weight: 500;
+}
+.signature {
+margin-top: 20px;
+padding-top: 16px;
+border-top: 1px solid #e5e7eb;
+}
+.signature-name {
+font-weight: 500;
+color: #1f2937;
+font-size: 14px;
+margin-bottom: 2px;
+}
+.signature-title {
+color: #6b7280;
+font-size: 12px;
+}
+.footer {
+background: #f8fafc;
+color: #6b7280;
+padding: 16px 20px;
+text-align: center;
+border-top: 1px solid #e5e7eb;
+}
+.footer-links {
+margin-bottom: 8px;
+}
+.footer-links a {
+color: #4b5563;
+text-decoration: none;
+margin: 0 8px;
+font-size: 11px;
+}
+.footer-text {
+font-size: 10px;
+color: #9ca3af;
+}
+.small-image {
+width: 100%;
+height: 100px;
+object-fit: cover;
+border-radius: 4px;
+margin: 12px 0;
+}
+@media (max-width: 520px) {
+.email-container { margin: 10px; max-width: none; }
+.stats-row { flex-direction: column; gap: 8px; }
+.stat { text-align: left; }
+}
+</style>
+</head>
+<body>
+<div class="email-container">
+<div class="header">
+<div class="logo">Zorqent</div>
+<div class="subtitle">Technology Solutions Team</div>
+</div>
+
+<img src="https://images.pexels.com/photos/3184328/pexels-photo-3184328.jpeg?auto=compress&cs=tinysrgb&w=1000&h=600&fit=crop" alt="Team collaboration in modern office" class="hero-image">
+
+<div class="content">
+<div class="greeting">
+Hi {{recipient_name}},
+</div>
+
+<div class="team-card">
+    <div class="team-title">{{subject}}</div>
+    <div class="team-meta">Department: Information and Technology • Role: {{role}}</div>
+</div>
+
+
+<div class="content-text">
+    {{content}}
+</div>
+
+
+<div class="stats-row">
+    <div class="stat">
+        <span class="stat-number">{{completed_projects_count}}</span>
+        <span class="stat-label">Projects<br>Completed</span>
+    </div>
+    <div class="stat">
+        <span class="stat-number">{{ongoing_projects_count}}</span>
+        <span class="stat-label">Ongoing<br>Projects</span>
+    </div>
+    <div class="stat">
+        <span class="stat-number">{{total_team_members}}</span>
+        <span class="stat-label">Team<br>Members</span>
+    </div>
+</div>
+
+
+<div class="content-text">
+    Thank you for your dedication and continuous effort. Together we are stronger!
+</div>
+
+<div class="signature">
+    <div class="signature-name">The Zorqent Management Team</div>
+    <div class="signature-title">management@zorqent.com</div>
+</div>
+</div>
+
+<div class="footer">
+<div class="footer-links">
+<a href="#">Intranet</a>
+<a href="#">HR Policies</a>
+<a href="#">Calendar</a>
+</div>
+<div class="footer-text">
+&copy; {{current_year}} Zorqent. All rights reserved.
+</div>
+</div>
+</div>
+</body>
+</html>

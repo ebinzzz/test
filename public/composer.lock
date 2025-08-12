@@ -1,0 +1,17 @@
+{
+  "name": "ebinb/sen",
+  "description": "A PHP-based SEN project with autoloading via PSR-4.",
+  "license": "proprietary",
+  "autoload": {
+    "psr-4": {
+      "Ebinb\\Sen\\": "src/"
+    }
+  },
+  "authors": [
+    {
+      "name": "ebinskryfon",
+      "email": "ebinbenny@skryfon.com"
+    }
+  ],
+  "require": {}
+}
