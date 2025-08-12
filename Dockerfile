@@ -6,6 +6,7 @@ RUN a2enmod rewrite
 
 # Copy project files into web root
 COPY . /var/www/html/
+RUN rm -f /var/www/html/index.php
 
 # Set working directory
 WORKDIR /var/www/html/
