@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y unzip git \
 
 # Install dependencies (if composer.json exists)
 RUN if [ -f composer.json ]; then composer install; fi
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
 # Expose port 80
 EXPOSE 80
